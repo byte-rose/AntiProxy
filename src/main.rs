@@ -43,6 +43,16 @@ async fn main() -> Result<(), String> {
     let data_dir = modules::account::get_data_dir()?;
     let _ = modules::account::get_accounts_dir()?;
 
+    // 初始化 API Keys 数据库
+    if let Err(e) = modules::api_keys::init_db() {
+        tracing::error!("failed to initialize API keys database: {}", e);
+    }
+
+    // 迁移旧的单一 API Key 到多 key 系统
+    if let Err(e) = modules::api_keys::migrate_legacy_key(&proxy_config.api_key) {
+        tracing::warn!("failed to migrate legacy API key: {}", e);
+    }
+
     let token_manager = Arc::new(proxy::TokenManager::new(data_dir));
     token_manager
         .update_sticky_config(proxy_config.scheduling.clone())

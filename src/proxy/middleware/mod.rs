@@ -7,5 +7,6 @@ pub mod monitor;
 pub mod web_auth;
 
 pub use auth::auth_middleware;
+pub use auth::AuthenticatedKey;
 pub use cors::cors_layer;
 pub use web_auth::web_auth_middleware;

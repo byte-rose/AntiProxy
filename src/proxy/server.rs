@@ -164,6 +164,17 @@ impl AxumServer {
             .route("/api/auth/password/login", post(handlers::webauthn::password_login))
             .route("/api/auth/password/change", post(handlers::webauthn::change_password))
             .route("/api/auth/reset", post(handlers::webauthn::reset_auth))
+            // API Keys Management
+            .route("/api/keys", get(handlers::api_keys::list_api_keys).post(handlers::api_keys::create_api_key))
+            .route("/api/keys/usage", get(handlers::api_keys::get_total_usage))
+            .route(
+                "/api/keys/:id",
+                get(handlers::api_keys::get_api_key)
+                    .put(handlers::api_keys::update_api_key)
+                    .delete(handlers::api_keys::delete_api_key),
+            )
+            .route("/api/keys/:id/regenerate", post(handlers::api_keys::regenerate_api_key))
+            .route("/api/keys/:id/reset_usage", post(handlers::api_keys::reset_api_key_usage))
             // Management APIs
             .route("/api/accounts", get(handlers::manage::list_accounts).post(handlers::manage::create_account))
             .route(

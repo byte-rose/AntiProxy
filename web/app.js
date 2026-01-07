@@ -1,5 +1,4 @@
 const state = {
-  apiKey: localStorage.getItem("ag_api_key") || "",
   accounts: [],
   currentAccountId: null,
   mappings: {
@@ -15,7 +14,104 @@ const state = {
     message: "",
     authUrl: "",
   },
+  // API Keys state
+  apiKeys: [],
+  apiKeysTotalUsage: null,
+  // Theme state
+  theme: "system", // "light", "dark", or "system"
 };
+
+// ========== 主题管理 ==========
+
+/**
+ * 获取系统偏好主题
+ * @returns {"light"|"dark"} 系统偏好的主题
+ */
+function getSystemTheme() {
+  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
+
+/**
+ * 获取有效主题（考虑 system 选项）
+ * @param {string} theme - 主题设置 ("light", "dark", or "system")
+ * @returns {"light"|"dark"} 实际应用的主题
+ */
+function getEffectiveTheme(theme) {
+  if (theme === "system") {
+    return getSystemTheme();
+  }
+  return theme;
+}
+
+/**
+ * 应用主题到 DOM
+ * @param {string} theme - 主题设置
+ */
+function applyTheme(theme) {
+  const effectiveTheme = getEffectiveTheme(theme);
+  document.documentElement.setAttribute("data-theme", effectiveTheme);
+}
+
+/**
+ * 保存主题到 localStorage
+ * @param {string} theme - 主题设置
+ */
+function saveTheme(theme) {
+  localStorage.setItem("theme", theme);
+}
+
+/**
+ * 从 localStorage 加载主题
+ * @returns {string} 保存的主题设置，默认 "system"
+ */
+function loadTheme() {
+  return localStorage.getItem("theme") || "system";
+}
+
+/**
+ * 初始化主题
+ */
+function initTheme() {
+  state.theme = loadTheme();
+  applyTheme(state.theme);
+  renderThemeSwitcher();
+
+  // 监听系统主题变化
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (state.theme === "system") {
+        applyTheme("system");
+      }
+    });
+  }
+}
+
+/**
+ * 设置主题
+ * @param {string} theme - 新主题设置
+ */
+function setTheme(theme) {
+  state.theme = theme;
+  saveTheme(theme);
+  applyTheme(theme);
+  renderThemeSwitcher();
+}
+
+/**
+ * 渲染主题切换器 UI
+ */
+function renderThemeSwitcher() {
+  const switcher = document.getElementById("themeSwitcher");
+  if (!switcher) return;
+
+  switcher.querySelectorAll(".theme-option").forEach((option) => {
+    const themeValue = option.dataset.themeValue;
+    option.classList.toggle("active", themeValue === state.theme);
+  });
+}
 
 // ========== 工具函数 ==========
 
@@ -69,9 +165,6 @@ function throttle(fn, limit) {
 }
 
 const elements = {
-  apiKeyInput: document.getElementById("apiKeyInput"),
-  saveKeyBtn: document.getElementById("saveKeyBtn"),
-  toggleKeyBtn: document.getElementById("toggleKeyBtn"),
   summaryGrid: document.getElementById("summaryGrid"),
   currentAccountBadge: document.getElementById("currentAccountBadge"),
   currentAccountBody: document.getElementById("currentAccountBody"),
@@ -100,6 +193,12 @@ const elements = {
   codeSample: document.getElementById("codeSample"),
   protocolBadge: document.getElementById("protocolBadge"),
   copyExampleBtn: document.getElementById("copyExampleBtn"),
+  // API Keys elements
+  createApiKeyBtn: document.getElementById("createApiKeyBtn"),
+  apiKeysList: document.getElementById("apiKeysList"),
+  apiKeysUsageSummary: document.getElementById("apiKeysUsageSummary"),
+  // Settings elements
+  resetAuthBtn: document.getElementById("resetAuthBtn"),
 };
 
 const defaultMappings = {
@@ -289,19 +388,10 @@ async function submitOAuthCallback() {
   }
 }
 
-function setApiKey(key) {
-  state.apiKey = key.trim();
-  localStorage.setItem("ag_api_key", state.apiKey);
-  elements.apiKeyInput.value = state.apiKey;
-}
-
 async function apiFetch(path, options = {}) {
   const headers = Object.assign({}, options.headers || {});
   if (options.body && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
-  }
-  if (state.apiKey) {
-    headers["x-api-key"] = state.apiKey;
   }
 
   const response = await fetch(path, {
@@ -997,24 +1087,391 @@ async function handleRefreshAll() {
   }
 }
 
+// ========== API Keys Management ==========
+
+async function loadApiKeys() {
+  try {
+    const [keys, usage] = await Promise.all([
+      apiFetch("/api/keys"),
+      apiFetch("/api/keys/usage"),
+    ]);
+    state.apiKeys = keys || [];
+    state.apiKeysTotalUsage = usage || null;
+    renderApiKeysList();
+    renderApiKeysUsageSummary();
+  } catch (err) {
+    console.error("Failed to load API keys:", err);
+  }
+}
+
+function formatNumber(num) {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(1) + "M";
+  } else if (num >= 1000) {
+    return (num / 1000).toFixed(1) + "K";
+  }
+  return num.toString();
+}
+
+function formatTimestamp(ts) {
+  if (!ts) return "Never";
+  const date = new Date(ts * 1000);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
+function renderApiKeysUsageSummary() {
+  if (!elements.apiKeysUsageSummary) return;
+  const usage = state.apiKeysTotalUsage;
+  if (!usage) {
+    elements.apiKeysUsageSummary.innerHTML = '<div class="empty">No usage data</div>';
+    return;
+  }
+
+  const successRate = usage.total_requests > 0
+    ? ((usage.success_count / usage.total_requests) * 100).toFixed(1)
+    : 0;
+
+  elements.apiKeysUsageSummary.innerHTML = `
+    <div class="summary-card">
+      <div class="summary-label">Total Requests</div>
+      <div class="summary-value">${formatNumber(usage.total_requests)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Success Rate</div>
+      <div class="summary-value">${successRate}%</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Input Tokens</div>
+      <div class="summary-value">${formatNumber(usage.total_input_tokens)}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Output Tokens</div>
+      <div class="summary-value">${formatNumber(usage.total_output_tokens)}</div>
+    </div>
+  `;
+}
+
+function renderApiKeysList() {
+  if (!elements.apiKeysList) return;
+
+  if (state.apiKeys.length === 0) {
+    elements.apiKeysList.innerHTML = `
+      <div class="empty" style="padding: 40px; text-align: center;">
+        <p>No API keys yet. Create one to get started.</p>
+      </div>
+    `;
+    return;
+  }
+
+  elements.apiKeysList.innerHTML = state.apiKeys.map(key => `
+    <div class="apikey-row" data-key-id="${escapeHtml(key.id)}">
+      <div class="apikey-name">${escapeHtml(key.name)}</div>
+      <div class="apikey-key">
+        <code>${escapeHtml(key.key_preview)}</code>
+        <button class="ghost copy-btn" data-copy-key="${escapeHtml(key.id)}" type="button">Copy</button>
+      </div>
+      <div class="apikey-status">
+        <span class="status-dot ${key.enabled ? '' : 'disabled'}"></span>
+        <span>${key.enabled ? 'Active' : 'Disabled'}</span>
+      </div>
+      <div class="apikey-requests">
+        <strong>${formatNumber(key.usage.total_requests)}</strong>
+        <span style="font-size: 10px; color: var(--text-muted);">
+          (${formatNumber(key.usage.success_count)} ok)
+        </span>
+      </div>
+      <div class="apikey-tokens">
+        <strong>${formatNumber(key.usage.total_input_tokens + key.usage.total_output_tokens)}</strong>
+      </div>
+      <div class="apikey-lastused">${formatTimestamp(key.last_used_at)}</div>
+      <div class="apikey-actions">
+        <button class="ghost" data-apikey-action="toggle" data-key-id="${escapeHtml(key.id)}" type="button">
+          ${key.enabled ? 'Disable' : 'Enable'}
+        </button>
+        <button class="ghost" data-apikey-action="regenerate" data-key-id="${escapeHtml(key.id)}" type="button">
+          Regen
+        </button>
+        <button class="ghost danger" data-apikey-action="delete" data-key-id="${escapeHtml(key.id)}" type="button">
+          Delete
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showCreateApiKeyModal() {
+  // Remove existing modal if any
+  const existingModal = document.querySelector('.modal-overlay');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Create New API Key</h3>
+        <button class="modal-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="newKeyName">Key Name</label>
+          <input type="text" id="newKeyName" placeholder="e.g., Production, Development, CI/CD" autofocus />
+        </div>
+        <div id="createdKeyContainer"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="ghost" id="modalCancelBtn" type="button">Cancel</button>
+        <button class="primary" id="modalCreateBtn" type="button">Create Key</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Show modal with animation
+  requestAnimationFrame(() => modal.classList.add('show'));
+
+  const closeModal = () => {
+    modal.classList.remove('show');
+    setTimeout(() => modal.remove(), 200);
+  };
+
+  modal.querySelector('.modal-close').addEventListener('click', closeModal);
+  modal.querySelector('#modalCancelBtn').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  const nameInput = modal.querySelector('#newKeyName');
+  const createBtn = modal.querySelector('#modalCreateBtn');
+  const createdContainer = modal.querySelector('#createdKeyContainer');
+
+  createBtn.addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      showToast("Please enter a key name");
+      return;
+    }
+
+    createBtn.disabled = true;
+    createBtn.textContent = "Creating...";
+
+    try {
+      const result = await apiFetch("/api/keys", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+
+      // Show the created key
+      createdContainer.innerHTML = `
+        <div class="created-key-display">
+          <div class="label">Your New API Key</div>
+          <code>${escapeHtml(result.key)}</code>
+          <div class="warning">
+            Make sure to copy this key now. You won't be able to see it again!
+          </div>
+        </div>
+      `;
+
+      // Change button to copy & close
+      createBtn.textContent = "Copy & Close";
+      createBtn.disabled = false;
+      nameInput.disabled = true;
+
+      createBtn.onclick = () => {
+        copyText(result.key, "API key copied!");
+        closeModal();
+        loadApiKeys();
+      };
+
+    } catch (err) {
+      showToast(`Failed to create key: ${err.message}`);
+      createBtn.disabled = false;
+      createBtn.textContent = "Create Key";
+    }
+  });
+
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      createBtn.click();
+    }
+  });
+}
+
+async function handleApiKeyAction(action, keyId) {
+  const key = state.apiKeys.find(k => k.id === keyId);
+  if (!key) return;
+
+  switch (action) {
+    case 'toggle':
+      try {
+        await apiFetch(`/api/keys/${keyId}`, {
+          method: "PUT",
+          body: JSON.stringify({ enabled: !key.enabled }),
+        });
+        showToast(key.enabled ? "API key disabled" : "API key enabled");
+        await loadApiKeys();
+      } catch (err) {
+        showToast(`Failed: ${err.message}`);
+      }
+      break;
+
+    case 'regenerate':
+      if (!window.confirm("Regenerate this API key? The old key will stop working immediately.")) {
+        return;
+      }
+      try {
+        const result = await apiFetch(`/api/keys/${keyId}/regenerate`, { method: "POST" });
+        // Show the new key in a modal
+        showRegeneratedKeyModal(result.key);
+        await loadApiKeys();
+      } catch (err) {
+        showToast(`Failed: ${err.message}`);
+      }
+      break;
+
+    case 'delete':
+      if (!window.confirm(`Delete API key "${key.name}"? This cannot be undone.`)) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/keys/${keyId}`, { method: "DELETE" });
+        showToast("API key deleted");
+        await loadApiKeys();
+      } catch (err) {
+        showToast(`Failed: ${err.message}`);
+      }
+      break;
+  }
+}
+
+function showRegeneratedKeyModal(newKey) {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay show';
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Key Regenerated</h3>
+        <button class="modal-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="created-key-display">
+          <div class="label">Your New API Key</div>
+          <code>${escapeHtml(newKey)}</code>
+          <div class="warning">
+            Make sure to copy this key now. You won't be able to see it again!
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="primary" id="copyAndCloseBtn" type="button">Copy & Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const closeModal = () => {
+    modal.classList.remove('show');
+    setTimeout(() => modal.remove(), 200);
+  };
+
+  modal.querySelector('.modal-close').addEventListener('click', closeModal);
+  modal.querySelector('#copyAndCloseBtn').addEventListener('click', () => {
+    copyText(newKey, "API key copied!");
+    closeModal();
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+}
+
+// ========== Settings ==========
+
+function showConfirmModal(title, message, confirmText, onConfirm, isDanger = false) {
+  // Remove existing modal if any
+  const existingModal = document.querySelector('.modal-overlay');
+  if (existingModal) existingModal.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal ${isDanger ? 'modal-danger' : ''}">
+      <div class="modal-header">
+        <h3>${escapeHtml(title)}</h3>
+        <button class="modal-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message">${escapeHtml(message)}</p>
+      </div>
+      <div class="modal-footer">
+        <button class="ghost" id="modalCancelBtn" type="button">Cancel</button>
+        <button class="${isDanger ? 'danger' : 'primary'}" id="modalConfirmBtn" type="button">${escapeHtml(confirmText)}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Show modal with animation
+  requestAnimationFrame(() => modal.classList.add('show'));
+
+  const closeModal = () => {
+    modal.classList.remove('show');
+    setTimeout(() => modal.remove(), 200);
+  };
+
+  modal.querySelector('.modal-close').addEventListener('click', closeModal);
+  modal.querySelector('#modalCancelBtn').addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  modal.querySelector('#modalConfirmBtn').addEventListener('click', () => {
+    closeModal();
+    onConfirm();
+  });
+}
+
+async function handleResetAuth() {
+  showConfirmModal(
+    "Reset Authentication",
+    "Are you sure you want to reset authentication?\n\nThis will remove ALL passkeys and passwords. You will need to set up authentication again.",
+    "Yes, Reset",
+    () => {
+      // Second confirmation
+      showConfirmModal(
+        "Final Confirmation",
+        "This action is IRREVERSIBLE!\n\nAll authentication credentials will be permanently deleted.",
+        "I Understand, Reset Now",
+        async () => {
+          try {
+            await apiFetch("/api/auth/reset", { method: "POST" });
+            showToast("Authentication reset successfully");
+            // Redirect to login page after reset
+            setTimeout(() => {
+              window.location.href = "/login.html";
+            }, 1000);
+          } catch (err) {
+            showToast(`Reset failed: ${err.message}`);
+          }
+        },
+        true
+      );
+    },
+    true
+  );
+}
+
 function bindEvents() {
-  elements.apiKeyInput.value = state.apiKey;
-
-  elements.saveKeyBtn.addEventListener("click", () => {
-    setApiKey(elements.apiKeyInput.value);
-    showToast("API key saved");
-    loadAccounts();
-    loadMappings();
-    loadModels();
-    renderExampleCode();
-  });
-
-  elements.toggleKeyBtn.addEventListener("click", () => {
-    const isPassword = elements.apiKeyInput.type === "password";
-    elements.apiKeyInput.type = isPassword ? "text" : "password";
-    elements.toggleKeyBtn.textContent = isPassword ? "Hide" : "Show";
-  });
-
   elements.refreshAllBtn.addEventListener("click", handleRefreshAll);
   if (elements.refreshAllAccountsBtn) {
     elements.refreshAllAccountsBtn.addEventListener("click", handleRefreshAll);
@@ -1052,6 +1509,16 @@ function bindEvents() {
     elements.copyExampleBtn.addEventListener("click", () => {
       copyText(elements.codeSample.textContent || "", "Example copied");
     });
+  }
+
+  // API Keys event listeners
+  if (elements.createApiKeyBtn) {
+    elements.createApiKeyBtn.addEventListener("click", showCreateApiKeyModal);
+  }
+
+  // Settings event listeners
+  if (elements.resetAuthBtn) {
+    elements.resetAuthBtn.addEventListener("click", handleResetAuth);
   }
 
   document.addEventListener("click", (event) => {
@@ -1125,6 +1592,25 @@ function bindEvents() {
       state.selectedModelId = modelRow.dataset.modelId;
       renderModelList();
       renderExampleCode();
+      return;
+    }
+
+    // API Keys actions
+    const apikeyActionBtn = event.target.closest("button[data-apikey-action]");
+    if (apikeyActionBtn) {
+      const action = apikeyActionBtn.dataset.apikeyAction;
+      const keyId = apikeyActionBtn.dataset.keyId;
+      handleApiKeyAction(action, keyId);
+      return;
+    }
+
+    // Theme switcher
+    const themeOption = event.target.closest(".theme-option[data-theme-value]");
+    if (themeOption) {
+      const themeValue = themeOption.dataset.themeValue;
+      setTheme(themeValue);
+      showToast(`Theme set to ${themeValue}`);
+      return;
     }
   });
 }
@@ -1151,6 +1637,9 @@ async function checkAuthStatus() {
 }
 
 // Initialize app after auth check
+// Initialize theme immediately (before auth check to prevent flash)
+initTheme();
+
 (async function init() {
   const isAuthenticated = await checkAuthStatus();
   if (!isAuthenticated) return;
@@ -1160,8 +1649,10 @@ async function checkAuthStatus() {
   refreshProtocolCopyTargets();
   renderProtocolCards();
   renderExampleCode();
+  renderThemeSwitcher();
   loadAccounts();
   loadMappings();
   loadModels();
+  loadApiKeys();
   fetchOAuthStatus();
 })();
