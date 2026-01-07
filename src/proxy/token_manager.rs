@@ -547,6 +547,14 @@ impl TokenManager {
                 token.email, token.account_id, session_id
             );
 
+            // 异步更新 current_account_id（不阻塞请求）
+            let account_id_for_update = token.account_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::modules::account::set_current_account_id(&account_id_for_update) {
+                    tracing::debug!("Failed to update current_account_id: {}", e);
+                }
+            });
+
             return Ok(SelectedToken {
                 access_token: token.access_token,
                 project_id,

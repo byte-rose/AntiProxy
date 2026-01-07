@@ -16,10 +16,17 @@ const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [
 
 pub struct UpstreamClient {
     http_client: Client,
+    user_agent: String,
 }
 
 impl UpstreamClient {
     pub fn new(proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) -> Self {
+        let user_agent = proxy_config
+            .as_ref()
+            .map(|c| c.user_agent.clone())
+            .filter(|ua| !ua.is_empty())
+            .unwrap_or_else(|| "antigravity/1.11.9 windows/amd64".to_string());
+
         let mut builder = Client::builder()
             // Connection settings (优化连接复用，减少建立开销)
             .connect_timeout(Duration::from_secs(20))
@@ -27,7 +34,7 @@ impl UpstreamClient {
             .pool_idle_timeout(Duration::from_secs(90))  // 空闲连接保持 90 秒
             .tcp_keepalive(Duration::from_secs(60))      // TCP 保活探测 60 秒
             .timeout(Duration::from_secs(600))
-            .user_agent("antigravity/1.11.9 windows/amd64");
+            .user_agent(&user_agent);
 
         if let Some(config) = proxy_config {
             if config.enabled && !config.url.is_empty() {
@@ -44,7 +51,7 @@ impl UpstreamClient {
 
         let http_client = builder.build().expect("Failed to create HTTP client");
 
-        Self { http_client }
+        Self { http_client, user_agent }
     }
 
     /// 构建 v1internal URL
@@ -95,7 +102,8 @@ impl UpstreamClient {
         );
         headers.insert(
             header::USER_AGENT,
-            header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64"),
+            header::HeaderValue::from_str(&self.user_agent)
+                .unwrap_or_else(|_| header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64")),
         );
 
         let mut last_err: Option<String> = None;
@@ -198,7 +206,8 @@ impl UpstreamClient {
         );
         headers.insert(
             header::USER_AGENT,
-            header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64"),
+            header::HeaderValue::from_str(&self.user_agent)
+                .unwrap_or_else(|_| header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64")),
         );
 
         let mut last_err: Option<String> = None;

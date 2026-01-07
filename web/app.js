@@ -195,6 +195,7 @@ const elements = {
   copyExampleBtn: document.getElementById("copyExampleBtn"),
   // API Keys elements
   createApiKeyBtn: document.getElementById("createApiKeyBtn"),
+  refreshApiKeysBtn: document.getElementById("refreshApiKeysBtn"),
   apiKeysList: document.getElementById("apiKeysList"),
   apiKeysUsageSummary: document.getElementById("apiKeysUsageSummary"),
   // Settings elements
@@ -1104,6 +1105,24 @@ async function loadApiKeys() {
   }
 }
 
+async function handleRefreshApiKeys() {
+  if (elements.refreshApiKeysBtn) {
+    elements.refreshApiKeysBtn.disabled = true;
+    elements.refreshApiKeysBtn.textContent = "Refreshing...";
+  }
+  try {
+    await loadApiKeys();
+    showToast("API keys refreshed");
+  } catch (err) {
+    showToast(`Refresh failed: ${err.message}`);
+  } finally {
+    if (elements.refreshApiKeysBtn) {
+      elements.refreshApiKeysBtn.disabled = false;
+      elements.refreshApiKeysBtn.textContent = "Refresh";
+    }
+  }
+}
+
 function formatNumber(num) {
   if (num >= 1000000) {
     return (num / 1000000).toFixed(1) + "M";
@@ -1255,7 +1274,19 @@ function showCreateApiKeyModal() {
   const createBtn = modal.querySelector('#modalCreateBtn');
   const createdContainer = modal.querySelector('#createdKeyContainer');
 
+  // Track whether key has been created to prevent duplicate creation
+  let keyCreated = false;
+  let createdKey = null;
+
   createBtn.addEventListener('click', async () => {
+    // If key was already created, just copy and close
+    if (keyCreated && createdKey) {
+      copyText(createdKey, "API key copied!");
+      closeModal();
+      loadApiKeys();
+      return;
+    }
+
     const name = nameInput.value.trim();
     if (!name) {
       showToast("Please enter a key name");
@@ -1270,6 +1301,10 @@ function showCreateApiKeyModal() {
         method: "POST",
         body: JSON.stringify({ name }),
       });
+
+      // Mark as created and store the key
+      keyCreated = true;
+      createdKey = result.key;
 
       // Show the created key
       createdContainer.innerHTML = `
@@ -1286,12 +1321,6 @@ function showCreateApiKeyModal() {
       createBtn.textContent = "Copy & Close";
       createBtn.disabled = false;
       nameInput.disabled = true;
-
-      createBtn.onclick = () => {
-        copyText(result.key, "API key copied!");
-        closeModal();
-        loadApiKeys();
-      };
 
     } catch (err) {
       showToast(`Failed to create key: ${err.message}`);
@@ -1514,6 +1543,9 @@ function bindEvents() {
   // API Keys event listeners
   if (elements.createApiKeyBtn) {
     elements.createApiKeyBtn.addEventListener("click", showCreateApiKeyModal);
+  }
+  if (elements.refreshApiKeysBtn) {
+    elements.refreshApiKeysBtn.addEventListener("click", handleRefreshApiKeys);
   }
 
   // Settings event listeners

@@ -1,6 +1,6 @@
-//! Web UI 认证中间件
+//! Web UI authentication middleware
 //!
-//! 保护 Web UI 路由，需要 Passkey 认证才能访问
+//! Protects Web UI routes, requires Passkey authentication to access
 
 use axum::{
     extract::{Request, State},
@@ -13,53 +13,53 @@ use crate::proxy::server::AppState;
 
 const SESSION_COOKIE_NAME: &str = "antiproxy_session";
 
-/// 需要保护的路径前缀
+/// Path prefixes that need protection
 fn is_protected_path(path: &str) -> bool {
-    // 管理 API 需要认证
+    // Admin API requires authentication
     if path.starts_with("/api/") {
-        // 认证相关的 API 不需要保护
+        // Auth-related APIs don't need protection
         if path.starts_with("/api/auth/") {
             return false;
         }
-        // OAuth 回调不需要保护 (在设置 passkey 之前需要添加账号)
+        // OAuth callback doesn't need protection (need to add account before setting up passkey)
         if path.starts_with("/api/oauth/") {
             return false;
         }
         return true;
     }
 
-    // 静态资源不需要保护
+    // Static assets don't need protection
     if is_static_asset(path) {
         return false;
     }
 
-    // 登录页面不需要保护
+    // Login page doesn't need protection
     if path == "/login.html" || path == "/login" {
         return false;
     }
 
-    // OAuth 回调页面
+    // OAuth callback page
     if path == "/oauth-callback" {
         return false;
     }
 
-    // 健康检查
+    // Health check
     if path == "/healthz" {
         return false;
     }
 
-    // API 协议端点不需要 Web UI 认证 (它们有自己的 API Key 认证)
+    // API protocol endpoints don't need Web UI authentication (they have their own API Key authentication)
     if path.starts_with("/v1/") || path.starts_with("/v1beta/") {
         return false;
     }
 
-    // 其他路径 (主页等) 需要认证
+    // Other paths (homepage, etc.) require authentication
     true
 }
 
-/// 检查是否是静态资源
+/// Check if the path is a static asset
 fn is_static_asset(path: &str) -> bool {
-    // HTML 文件不是静态资源 - 它们需要认证保护
+    // HTML files are not static assets - they need authentication protection
     if path.ends_with(".html") {
         return false;
     }
@@ -78,7 +78,7 @@ fn is_static_asset(path: &str) -> bool {
     )
 }
 
-/// 从 Cookie 中提取 session token
+/// Extract session token from Cookie
 fn extract_session_token(request: &Request) -> Option<String> {
     let cookie_header = request.headers().get(header::COOKIE)?;
     let cookie_str = cookie_header.to_str().ok()?;
@@ -93,7 +93,7 @@ fn extract_session_token(request: &Request) -> Option<String> {
     None
 }
 
-/// Web UI 认证中间件
+/// Web UI authentication middleware
 pub async fn web_auth_middleware(
     State(state): State<AppState>,
     request: Request,
@@ -103,7 +103,7 @@ pub async fn web_auth_middleware(
 
     tracing::debug!("web_auth_middleware: checking path = {}", path);
 
-    // 检查是否需要保护
+    // Check if protection is needed
     if !is_protected_path(&path) {
         tracing::debug!("web_auth_middleware: path {} is not protected, allowing", path);
         return next.run(request).await;
@@ -113,10 +113,10 @@ pub async fn web_auth_middleware(
 
     let session_manager = &state.session_manager;
 
-    // 检查 session
+    // Check session
     if let Some(token) = extract_session_token(&request) {
         if session_manager.validate_session(&token).await {
-            // Session 有效，刷新并继续
+            // Session is valid, refresh and continue
             session_manager.refresh_session(&token).await;
             tracing::debug!("web_auth_middleware: valid session for {}", path);
             return next.run(request).await;
@@ -126,9 +126,9 @@ pub async fn web_auth_middleware(
         tracing::debug!("web_auth_middleware: no session cookie for {}", path);
     }
 
-    // 未认证 - 需要登录或设置 Passkey
+    // Unauthenticated - need to login or set up Passkey
     tracing::info!("web_auth_middleware: unauthenticated access to {}, redirecting to login", path);
-    // API 请求返回 401
+    // API requests return 401
     if path.starts_with("/api/") {
         return (
             StatusCode::UNAUTHORIZED,
@@ -138,6 +138,6 @@ pub async fn web_auth_middleware(
             .into_response();
     }
 
-    // Web 页面重定向到登录页
+    // Web pages redirect to login page
     Redirect::to("/login.html").into_response()
 }

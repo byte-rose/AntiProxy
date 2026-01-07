@@ -248,13 +248,15 @@ impl AxumServer {
             .route("/healthz", get(health_check_handler))
             .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
             .layer(axum::middleware::from_fn_with_state(state.clone(), crate::proxy::middleware::web_auth_middleware))
+            .layer(crate::proxy::middleware::cors_layer())
+            // monitor_middleware 必须在 auth_middleware 之后执行（即在 layer 中位于其上方）
+            // 这样 AuthenticatedKey 才能在 monitor_middleware 中被访问
             .layer(axum::middleware::from_fn_with_state(state.clone(), crate::proxy::middleware::monitor::monitor_middleware))
             .layer(TraceLayer::new_for_http())
             .layer(axum::middleware::from_fn_with_state(
                 security_state.clone(),
                 crate::proxy::middleware::auth_middleware,
             ))
-            .layer(crate::proxy::middleware::cors_layer())
             .with_state(state)
             .fallback_service(ServeDir::new(static_dir).append_index_html_on_directories(true));
 

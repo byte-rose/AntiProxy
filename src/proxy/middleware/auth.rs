@@ -1,4 +1,4 @@
-// API Key 认证中间件
+// API Key authentication middleware
 use axum::{
     extract::State,
     extract::Request,
@@ -11,8 +11,8 @@ use tokio::sync::RwLock;
 
 use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
 
-/// API Key 认证中间件
-/// 支持多 key 认证：先检查多 key 数据库，再回退到配置文件中的单一 key
+/// API Key authentication middleware
+/// Supports multi-key authentication: first checks multi-key database, then falls back to single key from config file
 pub async fn auth_middleware(
     State(security): State<Arc<RwLock<ProxySecurityConfig>>>,
     mut request: Request,
@@ -21,7 +21,7 @@ pub async fn auth_middleware(
     let method = request.method().clone();
     let path = request.uri().path().to_string();
 
-    // 过滤心跳和健康检查请求,避免日志噪音
+    // Filter heartbeat and health check requests to avoid log noise
     if !path.contains("event_logging") && path != "/healthz" {
         tracing::info!("Request: {} {}", method, path);
     } else {
@@ -44,15 +44,7 @@ pub async fn auth_middleware(
     let security = security.read().await.clone();
     let effective_mode = security.effective_auth_mode();
 
-    if matches!(effective_mode, ProxyAuthMode::Off) {
-        return Ok(next.run(request).await);
-    }
-
-    if matches!(effective_mode, ProxyAuthMode::AllExceptHealth) && path == "/healthz" {
-        return Ok(next.run(request).await);
-    }
-
-    // 从 header 中提取 API key
+    // Extract API key from header (attempt extraction regardless of auth mode for statistics)
     let api_key = request
         .headers()
         .get(header::AUTHORIZATION)
@@ -66,56 +58,63 @@ pub async fn auth_middleware(
         })
         .map(|s| s.to_string());
 
-    let Some(key_str) = api_key else {
+    // If API key is provided, try to validate and set AuthenticatedKey (for statistics)
+    if let Some(ref key_str) = api_key {
+        // First try to validate from multi-key database
+        match crate::modules::api_keys::find_by_key(key_str) {
+            Ok(Some(api_key_record)) => {
+                if api_key_record.enabled {
+                    tracing::debug!("[Auth] Found valid API key for tracking: {} (id: {})", api_key_record.name, api_key_record.id);
+                    request.extensions_mut().insert(AuthenticatedKey {
+                        key: key_str.clone(),
+                        key_id: api_key_record.id,
+                        key_name: api_key_record.name,
+                    });
+                }
+            }
+            Ok(None) => {
+                // Check if it matches the single key from config file
+                if key_str == &security.api_key {
+                    tracing::debug!("[Auth] Found legacy config key for tracking");
+                    request.extensions_mut().insert(AuthenticatedKey {
+                        key: key_str.clone(),
+                        key_id: "legacy".to_string(),
+                        key_name: "Legacy Config Key".to_string(),
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::debug!("[Auth] Failed to query API keys database: {}", e);
+            }
+        }
+    }
+
+    // If auth mode is Off, allow through (but AuthenticatedKey is already set for statistics)
+    if matches!(effective_mode, ProxyAuthMode::Off) {
+        return Ok(next.run(request).await);
+    }
+
+    if matches!(effective_mode, ProxyAuthMode::AllExceptHealth) && path == "/healthz" {
+        return Ok(next.run(request).await);
+    }
+
+    // Auth mode is not Off, need to validate API key
+    let Some(_key_str) = api_key else {
         tracing::warn!("No API key provided in request");
         return Err(StatusCode::UNAUTHORIZED);
     };
 
-    // 首先尝试从多 key 数据库验证
-    match crate::modules::api_keys::find_by_key(&key_str) {
-        Ok(Some(api_key_record)) => {
-            if !api_key_record.enabled {
-                tracing::warn!("API key is disabled: {}", api_key_record.name);
-                return Err(StatusCode::UNAUTHORIZED);
-            }
-            tracing::debug!("Authenticated via multi-key: {}", api_key_record.name);
-            // 将 key ID 存入请求扩展，供后续用量统计使用
-            request.extensions_mut().insert(AuthenticatedKey {
-                key: key_str,
-                key_id: api_key_record.id,
-                key_name: api_key_record.name,
-            });
-            return Ok(next.run(request).await);
-        }
-        Ok(None) => {
-            // 多 key 数据库中没有找到，回退到配置文件中的单一 key
-        }
-        Err(e) => {
-            tracing::error!("Failed to query API keys database: {}", e);
-            // 数据库错误时回退到配置文件
-        }
-    }
-
-    // 回退：检查配置文件中的单一 key
-    if security.api_key.is_empty() {
-        tracing::error!("Proxy auth is enabled but no API keys configured; denying request");
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    // 检查是否匹配配置文件中的单一 key
-    if key_str == security.api_key {
-        request.extensions_mut().insert(AuthenticatedKey {
-            key: key_str,
-            key_id: "legacy".to_string(),
-            key_name: "Legacy Config Key".to_string(),
-        });
+    // Check if AuthenticatedKey is already set in request extensions
+    if request.extensions().get::<AuthenticatedKey>().is_some() {
+        // Already validated, allow through
         return Ok(next.run(request).await);
     }
 
+    // API key is invalid
     Err(StatusCode::UNAUTHORIZED)
 }
 
-/// 已认证的 API Key 信息（存储在请求扩展中）
+/// Authenticated API Key information (stored in request extensions)
 #[derive(Clone, Debug)]
 pub struct AuthenticatedKey {
     pub key: String,
@@ -140,7 +139,7 @@ fn is_static_asset(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    // 移除未使用的 use super::*;
+    // Removed unused use super::*;
 
     #[test]
     fn test_auth_placeholder() {

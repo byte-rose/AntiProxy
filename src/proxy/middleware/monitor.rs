@@ -7,6 +7,7 @@ use axum::{
 use std::time::Instant;
 use crate::proxy::server::AppState;
 use crate::proxy::monitor::ProxyRequestLog;
+use crate::proxy::middleware::AuthenticatedKey;
 use serde_json::Value;
 use futures::StreamExt;
 
@@ -15,18 +16,55 @@ pub async fn monitor_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    // Extract API key info (for usage tracking)
+    let authenticated_key = request.extensions().get::<AuthenticatedKey>().cloned();
+
+    // Check if this is an API path that needs tracking
+    let uri = request.uri().to_string();
+    let is_api_request = uri.starts_with("/v1/") && !uri.contains("event_logging");
+
+    // Debug log: check if AuthenticatedKey exists
+    if is_api_request {
+        if let Some(ref auth_key) = authenticated_key {
+            tracing::debug!(
+                "[Monitor] AuthenticatedKey found: id={}, name={}, key={}...",
+                auth_key.key_id,
+                auth_key.key_name,
+                &auth_key.key.chars().take(12).collect::<String>()
+            );
+        } else {
+            tracing::debug!("[Monitor] No AuthenticatedKey found for API request: {}", uri);
+        }
+    }
+
     if !state.monitor.is_enabled() {
-        return next.run(request).await;
+        let response = next.run(request).await;
+        // Even if monitor is disabled, we still need to record API key usage stats
+        if is_api_request {
+            if let Some(auth_key) = authenticated_key {
+                let success = response.status().is_success();
+                tracing::info!(
+                    "[Monitor] Recording usage for key: {}... success={}, path={}",
+                    &auth_key.key.chars().take(12).collect::<String>(),
+                    success,
+                    uri
+                );
+                match crate::modules::api_keys::record_usage(&auth_key.key, success, None, None) {
+                    Ok(_) => tracing::debug!("[Monitor] Usage recorded successfully"),
+                    Err(e) => tracing::error!("[Monitor] Failed to record usage: {}", e),
+                }
+            }
+        }
+        return response;
     }
 
     let start = Instant::now();
     let method = request.method().to_string();
-    let uri = request.uri().to_string();
-    
+
     if uri.contains("event_logging") {
         return next.run(request).await;
     }
-    
+
     let mut model = if uri.contains("/v1beta/models/") {
         uri.split("/v1beta/models/")
             .nth(1)
@@ -62,12 +100,12 @@ pub async fn monitor_middleware(
         request_body_str = None;
         request
     };
-    
+
     let response = next.run(request).await;
-    
+
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
-    
+
     let content_type = response.headers().get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
@@ -81,7 +119,7 @@ pub async fn monitor_middleware(
         url: uri,
         status,
         duration,
-        model, 
+        model,
         error: None,
         request_body: request_body_str,
         response_body: None,
@@ -94,7 +132,10 @@ pub async fn monitor_middleware(
         let (parts, body) = response.into_parts();
         let mut stream = body.into_data_stream();
         let (tx, rx) = tokio::sync::mpsc::channel(64);
-        
+
+        // Clone API key info for spawned task
+        let auth_key_for_spawn = authenticated_key.clone();
+
         tokio::spawn(async move {
             let mut last_few_bytes = Vec::new();
             while let Some(chunk_res) = stream.next().await {
@@ -112,7 +153,7 @@ pub async fn monitor_middleware(
                     let _ = tx.send(Err(axum::Error::new(e))).await;
                 }
             }
-            
+
             if let Ok(full_tail) = std::str::from_utf8(&last_few_bytes) {
                 for line in full_tail.lines().rev() {
                     if line.starts_with("data: ") && line.contains("\"usage\"") {
@@ -130,10 +171,24 @@ pub async fn monitor_middleware(
                     }
                 }
             }
-            
+
             if log.status >= 400 {
                 log.error = Some("Stream Error or Failed".to_string());
             }
+
+            // Record API key usage stats
+            if is_api_request {
+                if let Some(auth_key) = auth_key_for_spawn {
+                    let success = log.status < 400;
+                    let _ = crate::modules::api_keys::record_usage(
+                        &auth_key.key,
+                        success,
+                        log.input_tokens,
+                        log.output_tokens,
+                    );
+                }
+            }
+
             monitor.log_request(log).await;
         });
 
@@ -156,21 +211,52 @@ pub async fn monitor_middleware(
                 } else {
                     log.response_body = Some("[Binary Response Data]".to_string());
                 }
-                
+
                 if log.status >= 400 {
                     log.error = log.response_body.clone();
                 }
+
+                // Record API key usage stats
+                if is_api_request {
+                    if let Some(auth_key) = authenticated_key.clone() {
+                        let success = log.status < 400;
+                        let _ = crate::modules::api_keys::record_usage(
+                            &auth_key.key,
+                            success,
+                            log.input_tokens,
+                            log.output_tokens,
+                        );
+                    }
+                }
+
                 monitor.log_request(log).await;
                 Response::from_parts(parts, Body::from(bytes))
             }
             Err(_) => {
                 log.response_body = Some("[Response too large]".to_string());
+
+                // Record API key usage stats (failure case)
+                if is_api_request {
+                    if let Some(auth_key) = authenticated_key.clone() {
+                        let _ = crate::modules::api_keys::record_usage(&auth_key.key, false, None, None);
+                    }
+                }
+
                 monitor.log_request(log).await;
                 Response::from_parts(parts, Body::empty())
             }
         }
     } else {
         log.response_body = Some(format!("[{}]", content_type));
+
+        // Record API key usage stats
+        if is_api_request {
+            if let Some(auth_key) = authenticated_key {
+                let success = log.status < 400;
+                let _ = crate::modules::api_keys::record_usage(&auth_key.key, success, None, None);
+            }
+        }
+
         monitor.log_request(log).await;
         response
     }

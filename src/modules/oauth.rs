@@ -1,8 +1,22 @@
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 // Google OAuth 配置
-const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = "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";
+// 敏感凭证从环境变量读取，提供默认值作为 fallback（仅用于开发环境）
+static CLIENT_ID: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("GOOGLE_CLIENT_ID").unwrap_or_else(|_| {
+        tracing::warn!("GOOGLE_CLIENT_ID not set, using default (not recommended for production)");
+        "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com".to_string()
+    })
+});
+
+static CLIENT_SECRET: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| {
+        tracing::warn!("GOOGLE_CLIENT_SECRET not set, using default (not recommended for production)");
+        "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".to_string()
+    })
+});
+
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 
@@ -59,7 +73,7 @@ pub fn get_auth_url(redirect_uri: &str) -> String {
     ].join(" ");
 
     let params = vec![
-        ("client_id", CLIENT_ID),
+        ("client_id", CLIENT_ID.as_str()),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
         ("scope", &scopes),
@@ -77,8 +91,8 @@ pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenRespon
     let client = crate::utils::http::create_client(15);
     
     let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
+        ("client_id", CLIENT_ID.as_str()),
+        ("client_secret", CLIENT_SECRET.as_str()),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("grant_type", "authorization_code"),
@@ -125,8 +139,8 @@ pub async fn refresh_access_token(refresh_token: &str) -> Result<TokenResponse, 
     let client = crate::utils::http::create_client(15);
     
     let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
+        ("client_id", CLIENT_ID.as_str()),
+        ("client_secret", CLIENT_SECRET.as_str()),
         ("refresh_token", refresh_token),
         ("grant_type", "refresh_token"),
     ];

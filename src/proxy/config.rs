@@ -76,12 +76,31 @@ pub struct ProxyConfig {
 }
 
 /// 上游代理配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamProxyConfig {
     /// 是否启用
+    #[serde(default)]
     pub enabled: bool,
     /// 代理地址 (http://, https://, socks5://)
+    #[serde(default)]
     pub url: String,
+    /// 自定义 User-Agent 字符串（用于上游请求）
+    #[serde(default = "default_user_agent")]
+    pub user_agent: String,
+}
+
+fn default_user_agent() -> String {
+    "antigravity/1.11.9 windows/amd64".to_string()
+}
+
+impl Default for UpstreamProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            user_agent: default_user_agent(),
+        }
+    }
 }
 
 impl Default for ProxyConfig {
