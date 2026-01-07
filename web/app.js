@@ -21,11 +21,11 @@ const state = {
   theme: "system", // "light", "dark", or "system"
 };
 
-// ========== 主题管理 ==========
+// ========== Theme Management ==========
 
 /**
- * 获取系统偏好主题
- * @returns {"light"|"dark"} 系统偏好的主题
+ * Get system preferred theme
+ * @returns {"light"|"dark"} System preferred theme
  */
 function getSystemTheme() {
   if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
@@ -35,9 +35,9 @@ function getSystemTheme() {
 }
 
 /**
- * 获取有效主题（考虑 system 选项）
- * @param {string} theme - 主题设置 ("light", "dark", or "system")
- * @returns {"light"|"dark"} 实际应用的主题
+ * Get effective theme (considering system option)
+ * @param {string} theme - Theme setting ("light", "dark", or "system")
+ * @returns {"light"|"dark"} Actual applied theme
  */
 function getEffectiveTheme(theme) {
   if (theme === "system") {
@@ -47,8 +47,8 @@ function getEffectiveTheme(theme) {
 }
 
 /**
- * 应用主题到 DOM
- * @param {string} theme - 主题设置
+ * Apply theme to DOM
+ * @param {string} theme - Theme setting
  */
 function applyTheme(theme) {
   const effectiveTheme = getEffectiveTheme(theme);
@@ -56,30 +56,30 @@ function applyTheme(theme) {
 }
 
 /**
- * 保存主题到 localStorage
- * @param {string} theme - 主题设置
+ * Save theme to localStorage
+ * @param {string} theme - Theme setting
  */
 function saveTheme(theme) {
   localStorage.setItem("theme", theme);
 }
 
 /**
- * 从 localStorage 加载主题
- * @returns {string} 保存的主题设置，默认 "system"
+ * Load theme from localStorage
+ * @returns {string} Saved theme setting, defaults to "system"
  */
 function loadTheme() {
   return localStorage.getItem("theme") || "system";
 }
 
 /**
- * 初始化主题
+ * Initialize theme
  */
 function initTheme() {
   state.theme = loadTheme();
   applyTheme(state.theme);
   renderThemeSwitcher();
 
-  // 监听系统主题变化
+  // Listen for system theme changes
   if (window.matchMedia) {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (state.theme === "system") {
@@ -90,8 +90,8 @@ function initTheme() {
 }
 
 /**
- * 设置主题
- * @param {string} theme - 新主题设置
+ * Set theme
+ * @param {string} theme - New theme setting
  */
 function setTheme(theme) {
   state.theme = theme;
@@ -101,7 +101,7 @@ function setTheme(theme) {
 }
 
 /**
- * 渲染主题切换器 UI
+ * Render theme switcher UI
  */
 function renderThemeSwitcher() {
   const switcher = document.getElementById("themeSwitcher");
@@ -113,13 +113,13 @@ function renderThemeSwitcher() {
   });
 }
 
-// ========== 工具函数 ==========
+// ========== Utility Functions ==========
 
 /**
- * 防抖函数 - 用于减少高频操作的 API 调用
- * @param {Function} fn - 要防抖的函数
- * @param {number} delay - 延迟时间（毫秒）
- * @returns {Function} - 防抖后的函数
+ * Debounce function - reduces API calls for high-frequency operations
+ * @param {Function} fn - Function to debounce
+ * @param {number} delay - Delay time in milliseconds
+ * @returns {Function} - Debounced function
  */
 function debounce(fn, delay) {
   let timeoutId = null;
@@ -135,10 +135,10 @@ function debounce(fn, delay) {
 }
 
 /**
- * 节流函数 - 用于限制高频操作的执行频率
- * @param {Function} fn - 要节流的函数
- * @param {number} limit - 最小间隔时间（毫秒）
- * @returns {Function} - 节流后的函数
+ * Throttle function - limits execution frequency of high-frequency operations
+ * @param {Function} fn - Function to throttle
+ * @param {number} limit - Minimum interval time in milliseconds
+ * @returns {Function} - Throttled function
  */
 function throttle(fn, limit) {
   let lastCall = 0;
@@ -440,9 +440,9 @@ function formatDate(timestamp) {
 }
 
 /**
- * 根据百分比返回状态颜色类名
- * @param {number} percentage - 百分比值 (0-100)
- * @returns {string} - CSS 类名: 'quota-high' (绿), 'quota-medium' (黄), 'quota-low' (红)
+ * Returns color class based on percentage
+ * @param {number} percentage - Percentage value (0-100)
+ * @returns {string} - CSS class name: 'quota-high' (green), 'quota-medium' (yellow), 'quota-low' (red)
  */
 function getQuotaColorClass(percentage) {
   if (percentage >= 60) return "quota-high";
@@ -872,7 +872,7 @@ async function loadMappings() {
   }
 }
 
-// 内部保存函数（直接调用 API）
+// Internal save function (direct API call)
 async function _saveMappingsImpl() {
   await apiFetch("/api/proxy/mappings", {
     method: "PUT",
@@ -884,26 +884,26 @@ async function _saveMappingsImpl() {
   });
 }
 
-// 保存 Mappings 的状态跟踪
+// State tracking for saving mappings
 let _saveMappingsTimer = null;
 let _saveMappingsResolvers = [];
 
 /**
- * 防抖版本的 saveMappings
- * 在 300ms 内的多次调用会合并为一次，减少 API 请求
- * @returns {Promise} - 保存完成的 Promise
+ * Debounced version of saveMappings
+ * Multiple calls within 300ms will be combined into one, reducing API requests
+ * @returns {Promise} - Promise that resolves when save completes
  */
 function saveMappings() {
   return new Promise((resolve, reject) => {
-    // 保存当前调用的 resolver
+    // Save current call's resolver
     _saveMappingsResolvers.push({ resolve, reject });
 
-    // 清除之前的定时器（重置防抖）
+    // Clear previous timer (reset debounce)
     if (_saveMappingsTimer) {
       clearTimeout(_saveMappingsTimer);
     }
 
-    // 设置新的定时器
+    // Set new timer
     _saveMappingsTimer = setTimeout(async () => {
       const resolvers = _saveMappingsResolvers;
       _saveMappingsResolvers = [];
@@ -911,13 +911,13 @@ function saveMappings() {
 
       try {
         await _saveMappingsImpl();
-        // 所有等待的调用都成功
+        // All waiting calls succeed
         resolvers.forEach(({ resolve }) => resolve());
       } catch (err) {
-        // 所有等待的调用都失败
+        // All waiting calls fail
         resolvers.forEach(({ reject }) => reject(err));
       }
-    }, 300); // 300ms 防抖延迟
+    }, 300); // 300ms debounce delay
   });
 }
 
@@ -1384,6 +1384,20 @@ async function handleApiKeyAction(action, keyId) {
   }
 }
 
+async function handleCopyApiKey(keyId) {
+  try {
+    const result = await apiFetch(`/api/keys/${keyId}/reveal`, { method: "POST" });
+    if (result && result.key) {
+      copyText(result.key, "API key copied!");
+    } else {
+      showToast("Failed to get API key");
+    }
+  } catch (err) {
+    // If reveal endpoint doesn't exist, show a message
+    showToast("Full key not available. Keys can only be viewed when created.");
+  }
+}
+
 function showRegeneratedKeyModal(newKey) {
   const modal = document.createElement('div');
   modal.className = 'modal-overlay show';
@@ -1600,6 +1614,14 @@ function bindEvents() {
     if (copyModel) {
       const model = copyModel.dataset.copyModel;
       copyText(model, "Model copied");
+      return;
+    }
+
+    // API Key copy button
+    const copyKeyBtn = event.target.closest("button[data-copy-key]");
+    if (copyKeyBtn) {
+      const keyId = copyKeyBtn.dataset.copyKey;
+      handleCopyApiKey(keyId);
       return;
     }
 
