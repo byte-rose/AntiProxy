@@ -16,7 +16,7 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         request.model, mapped_model, config.request_type, config.image_config.is_some());
     
     // 1. 提取所有 System Message 并注入补丁
-    let system_instructions: Vec<String> = request.messages.iter()
+    let _system_instructions: Vec<String> = request.messages.iter()
         .filter(|msg| msg.role == "system")
         .filter_map(|msg| {
             msg.content.as_ref().map(|c| match c {
@@ -305,9 +305,31 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         }
     }
     
-    if !system_instructions.is_empty() {
-        inner_request["systemInstruction"] = json!({ "parts": [{"text": system_instructions.join("\n\n")}] });
-    }
+    
+    // [CRITICAL FIX] 参考 CLIProxyAPI：使用固定的 Antigravity 身份文本
+    let antigravity_identity = r#"<identity>
+You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
+The USER will send you requests, which you must always prioritize addressing. Along with each USER request, we will attach additional metadata about their current state, such as what files they have open and where their cursor is.
+This information may or may not be relevant to the coding task, it is up for you to decide.
+</identity>
+
+<tool_calling>
+Call tools as you normally would. The following list provides additional guidance to help you avoid errors:
+  - **Absolute paths only**. When using tools that accept file path arguments, ALWAYS use the absolute file path.
+</tool_calling>
+
+<communication_style>
+- **Formatting**. Format your responses in github-style markdown to make your responses easier for the USER to parse.
+- **Proactiveness**. As an agent, you are allowed to be proactive, but only in the course of completing the user's task.
+- **Helpfulness**. Respond like a helpful software engineer who is explaining your work to a friendly collaborator on the project.
+- **Ask for clarification**. If you are unsure about the USER's intent, always ask for clarification rather than making assumptions.
+</communication_style>"#;
+
+    inner_request["systemInstruction"] = json!({ 
+        "role": "user",
+        "parts": [{"text": antigravity_identity}] 
+    });
     
     if config.inject_google_search {
         crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request);

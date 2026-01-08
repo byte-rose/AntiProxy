@@ -7,9 +7,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
-// Cloud Code v1internal endpoints (default priority: prod → daily)
+// Cloud Code v1internal endpoints
+// [FIX] daily 端点优先 - sandbox 端点返回 404 已移除
+const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
-const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
 pub struct UpstreamClient {
     http_client: Client,
@@ -24,7 +25,7 @@ impl UpstreamClient {
             .as_ref()
             .map(|c| c.user_agent.clone())
             .filter(|ua| !ua.is_empty())
-            .unwrap_or_else(|| "antigravity/1.11.9 windows/amd64".to_string());
+            .unwrap_or_else(|| "antigravity/1.13.3 darwin/arm64".to_string());
 
         let mut builder = Client::builder()
             // Connection settings (optimize connection reuse, reduce overhead)
@@ -51,9 +52,10 @@ impl UpstreamClient {
         let http_client = builder.build().expect("Failed to create HTTP client");
 
         // Initialize with default endpoint priority
+        // [FIX] daily 端点优先，避免 429 限流
         let endpoints = Arc::new(RwLock::new(vec![
-            V1_INTERNAL_BASE_URL_PROD.to_string(),
             V1_INTERNAL_BASE_URL_DAILY.to_string(),
+            V1_INTERNAL_BASE_URL_PROD.to_string(),
         ]));
 
         Self { http_client, user_agent, endpoints }
